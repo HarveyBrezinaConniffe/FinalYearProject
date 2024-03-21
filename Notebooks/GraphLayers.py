@@ -92,3 +92,29 @@ class PoolVerticesToUniversal(keras.layers.Layer):
         u_out = tf.reduce_sum(v_in, axis=-1)
 
         return [v_in, e_in, u_out, adj, conEd]
+
+# Pool universal to all vertices.
+class PoolUniversalToVertices(keras.layers.Layer):
+    def __init__(self):
+        super(PoolUniversalToVertices, self).__init__()
+
+    def call(self, inputs):
+        v_in, e_in, u_in, adj, conEd = inputs
+
+        u_tiled = tf.tile(tf.expand_dims(u_in, axis=1), [1, v_in.shape[1], 1])
+        v_out = v_in+u_tiled
+
+        return [v_out, e_in, u_in, adj, conEd]
+
+# Pool universal to all edges.
+class PoolUniversalToEdges(keras.layers.Layer):
+    def __init__(self):
+        super(PoolUniversalToEdges, self).__init__()
+
+    def call(self, inputs):
+        v_in, e_in, u_in, adj, conEd = inputs
+
+        u_tiled = tf.tile(tf.expand_dims(u_in, axis=1), [1, e_in.shape[1], 1])
+        e_out = e_in+u_tiled
+
+        return [v_in, e_out, u_in, adj, conEd]
