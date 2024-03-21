@@ -37,16 +37,32 @@ def convertFromNetworkX(graph, maxNodes, maxEdges, embeddingDim):
     
     return nodeEmbeddings, edgeEmbeddings, universalEmbedding, adjacencyMatrix, connectedEdges
 
+class UpdateFunction(keras.layers.Layer):
+    def __init__(self, name, num_layers, activation, out_dim):
+        super(UpdateFunction, self).__init__()
+        self.num_layers = num_layers
+        self.dense_layers = []
+        
+        for i in range(num_layers):
+            self.dense_layers.append(Dense(out_dim, activation=activation, name=name+f"_{i}"))
+
+    def call(self, input):
+        x = input
+        for i in range(self.num_layers):
+            x = self.dense_layers[i](x)
+        return x
+
 class GraphUpdate(keras.layers.Layer):
     def __init__(self, 
                  v_out_dim,
                  e_out_dim,
                  u_out_dim,
+                 update_layers,
                  activation="relu"):
         super(GraphUpdate, self).__init__()
-        self.v_update = Dense(v_out_dim, activation=activation, name="V_Update")
-        self.e_update = Dense(e_out_dim, activation=activation, name="E_Update")
-        self.u_update = Dense(u_out_dim, activation=activation, name="U_Update")
+        self.v_update = UpdateFunction("V_Update", update_layers, activation, v_out_dim)
+        self.e_update = UpdateFunction("E_Update", update_layers, activation, e_out_dim)
+        self.u_update = UpdateFunction("U_Update", update_layers, activation, u_out_dim)
 
     def call(self, inputs):
         v_in, e_in, u_in, adj, conEd = inputs
