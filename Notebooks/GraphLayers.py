@@ -109,6 +109,18 @@ class PoolVerticesToUniversal(keras.layers.Layer):
 
         return [v_in, e_in, u_out, adj, conEd]
 
+# Pool all edges to universal.
+class PoolEdgesToUniversal(keras.layers.Layer):
+    def __init__(self):
+        super(PoolEdgesToUniversal, self).__init__()
+
+    def call(self, inputs):
+        v_in, e_in, u_in, adj, conEd = inputs
+        
+        u_out = tf.reduce_sum(e_in, axis=-1)
+
+        return [v_in, e_in, u_out, adj, conEd]
+
 # Pool universal to all vertices.
 class PoolUniversalToVertices(keras.layers.Layer):
     def __init__(self):
@@ -134,3 +146,28 @@ class PoolUniversalToEdges(keras.layers.Layer):
         e_out = e_in+u_tiled
 
         return [v_in, e_out, u_in, adj, conEd]
+
+class GraphNetsLayer(keras.layers.Layer):
+    def __init__(self, dim, update_layers, activation="relu"):
+        super(GraphNetsLayer, self).__init__()
+        self.pool_V_to_E = PoolVerticesToEdges()
+        self.pool_E_to_V = PoolEdgesToVertices()
+        self.pool_U_to_V = PoolUniversalToVertices()
+        self.pool_U_to_E = PoolUniversalToEdges()
+        self.pool_V_to_U = PoolVerticesToUniversal()
+        self.pool_E_to_U = PoolEdgesToUniversal()
+        self.updater = GraphUpdate(dim, dim, dim, update_layers, activation)
+
+    def call(self, inputs):
+        x = inputs
+        x = self.pool_V_to_E(x)
+        x = self.pool_U_to_E(x)
+        
+        x = self.pool_U_to_V(x)
+        x = self.pool_E_to_V(x)
+        
+        x = self.pool_V_to_U(x)
+        x = self.pool_E_to_U(x)
+        x = self.updater(x)
+
+        return x
