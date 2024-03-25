@@ -13,6 +13,7 @@ def convertFromNetworkX(graph, maxNodes, maxEdges, embeddingDim):
     universalEmbedding = np.zeros((embeddingDim))
     adjacencyMatrix = np.zeros((maxNodes, maxNodes))
     connectedEdges = np.zeros((maxNodes, maxEdges))
+    edgeAdjacency = np.zeros((maxEdges, maxEdges))
     
     # Populate node embeddings.
     for nodeNum, symbol in graph.nodes(data="element"):
@@ -26,16 +27,29 @@ def convertFromNetworkX(graph, maxNodes, maxEdges, embeddingDim):
 
         # Kinda hacky, Edgeorder can be 1.5 prob should map not multiply
         edgeEmbeddings[i][int(edgeOrder*2)] = 1.0
-        
+
+        # Row node connected to col node indicated by a 1
         adjacencyMatrix[start][end] = 1.0
         adjacencyMatrix[end][start] = 1.0
-        
+
+        # Row node connected to col edge indicated by a 1
         connectedEdges[start][i] = 1.0
         connectedEdges[end][i] = 1.0
         
         i += 1
-    
-    return nodeEmbeddings, edgeEmbeddings, universalEmbedding, adjacencyMatrix, connectedEdges
+
+    # Create edge adjacency matrix
+    i = 0
+    for start, end in graph.edges:
+        for otherEdgeIdx in range(maxEdges):
+            if otherEdgeIdx == i:
+                continue
+            if connectedEdges[start][otherEdgeIdx] == 1.0 or connectedEdges[end][otherEdgeIdx] == 1.0:
+                edgeAdjacency[i][otherEdgeIdx] = 1.0
+                edgeAdjacency[otherEdgeIdx][i] = 1.0
+        i += 1
+            
+    return nodeEmbeddings, edgeEmbeddings, universalEmbedding, adjacencyMatrix, connectedEdges, edgeAdjacency
 
 class UpdateFunction(keras.layers.Layer):
     def __init__(self, name, num_layers, activation, out_dim):
@@ -65,11 +79,11 @@ class GraphUpdate(keras.layers.Layer):
         self.u_update = UpdateFunction("U_Update", update_layers, activation, u_out_dim)
 
     def call(self, inputs):
-        v_in, e_in, u_in, adj, conEd = inputs
+        v_in, e_in, u_in, adj, conEd, edgeAdj = inputs
         v_out = self.v_update(v_in)
         e_out = self.e_update(e_in)
         u_out = self.u_update(u_in)
-        return [v_out, e_out, u_out, adj, conEd]
+        return [v_out, e_out, u_out, adj, conEd, edgeAdj]
 
 # Add the embedding of each connected edge to each vertex.
 class PoolEdgesToVertices(keras.layers.Layer):
@@ -146,6 +160,122 @@ class PoolUniversalToEdges(keras.layers.Layer):
         e_out = e_in+u_tiled
 
         return [v_in, e_out, u_in, adj, conEd]
+
+# Pool to edges from connected edges, vertices and universal. Where information comes from is defined by this layers setup. 
+class PoolToEdges(keras.layers.Layer):
+    def __init__(self,
+                pool_from_edges=False,
+                pool_from_vertices=False,
+                pool_from_universal=False):
+        super(PoolToEdges, self).__init__()
+        self.pool_from_edges = pool_from_edges
+        self.pool_from_vertices = pool_from_vertices
+        self.pool_from_universal = pool_from_universal
+
+    def call(self, inputs):
+        v_in, e_in, u_in, adj, conEd, edgeAdj = inputs
+
+        e_out = e_in
+
+        if self.pool_from_vertices:
+            pooledVertices = tf.matmul(conEd, v_in, transpose_a=True)
+            e_out += pooledVertices
+
+        if self.pool_from_edges:
+            pooledEdges = tf.matmul(edgeAdj, e_in)
+            e_out += pooledEdges
+
+        if self.pool_from_universal:
+            u_tiled = tf.tile(tf.expand_dims(u_in, axis=1), [1, e_in.shape[1], 1])
+            e_out += u_tiled
+
+        return [v_in, e_out, u_in, adj, conEd, edgeAdj]
+
+# Pool to edges from connected edges, vertices and universal. Where information comes from is defined by this layers setup. 
+class PoolToVertices(keras.layers.Layer):
+    def __init__(self,
+                pool_from_edges=False,
+                pool_from_vertices=False,
+                pool_from_universal=False):
+        super(PoolToVertices, self).__init__()
+        self.pool_from_edges = pool_from_edges
+        self.pool_from_vertices = pool_from_vertices
+        self.pool_from_universal = pool_from_universal
+
+    def call(self, inputs):
+        v_in, e_in, u_in, adj, conEd, edgeAdj = inputs
+
+        v_out = v_in
+
+        if self.pool_from_vertices:
+            pooled_vertices = tf.matmul(adj, v_in, transpose_a=True)
+            v_out += pooled_vertices
+        
+        if self.pool_from_edges:
+            pooledEdges = tf.matmul(conEd, e_in)
+            v_out += pooledEdges
+            
+        if self.pool_from_universal:
+            u_tiled = tf.tile(tf.expand_dims(u_in, axis=1), [1, v_in.shape[1], 1])
+            v_out += u_tiled
+        
+        return [v_out, e_in, u_in, adj, conEd, edgeAdj]
+
+# Pool to edges from connected edges, vertices and universal. Where information comes from is defined by this layers setup. 
+class PoolToUniversal(keras.layers.Layer):
+    def __init__(self,
+                pool_from_edges=False,
+                pool_from_vertices=False):
+        super(PoolToUniversal, self).__init__()
+        self.pool_from_edges = pool_from_edges
+        self.pool_from_vertices = pool_from_vertices
+
+    def call(self, inputs):
+        v_in, e_in, u_in, adj, conEd, edgeAdj = inputs
+
+        u_out = u_in
+
+        if self.pool_from_vertices:
+            u_out += tf.reduce_sum(v_in, axis=-2)
+        
+        if self.pool_from_edges:
+            u_out += tf.reduce_sum(e_in, axis=-2)
+                    
+        return [v_in, e_in, u_out, adj, conEd, edgeAdj]
+
+# Layer that does one "step" of pooling between components
+class PoolStep(keras.layers.Layer):
+    def __init__(self,
+                p_ve=False,
+                p_ee=False,
+                p_ue=False,
+                p_vv=False,
+                p_ev=False,
+                p_uv=False,
+                p_vu=False,
+                p_eu=False):
+        super(PoolStep, self).__init__()
+        self.p_ve = p_ve
+        self.p_ee = p_ee
+        self.p_ue = p_ue
+        self.p_vv = p_vv
+        self.p_ev = p_ev
+        self.p_uv = p_uv
+        self.p_vu = p_vu
+        self.p_eu = p_eu
+        self.edge_pooler = PoolToEdges(pool_from_edges=p_ee, pool_from_vertices=p_ve, pool_from_universal=p_ue)
+        self.vertex_pooler = PoolToVertices(pool_from_edges=p_ve, pool_from_vertices=p_vv, pool_from_universal=p_uv)
+        self.universal_pooler = PoolToUniversal(pool_from_edges=p_eu, pool_from_vertices=p_vu)
+    
+    def call(self, inputs):
+        v_in, e_in, u_in, adj, conEd, edgeAdj = inputs
+
+        v_out, _, _, _, _, _ = self.vertex_pooler(inputs)
+        _, e_out, _, _, _, _ = self.edge_pooler(inputs)
+        _, _, u_out, _, _, _ = self.universal_pooler(inputs)
+
+        return [v_out, e_out, u_out, adj, conEd, edgeAdj]
+
 
 class WeaveLayer(keras.layers.Layer):
     def __init__(self):
