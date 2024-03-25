@@ -147,8 +147,27 @@ class PoolUniversalToEdges(keras.layers.Layer):
 
         return [v_in, e_out, u_in, adj, conEd]
 
+class WeaveLayer(keras.layers.Layer):
+    def __init__(self):
+        super(WeaveLayer, self).__init__()
+
+    def call(self, inputs):
+        v_in, e_in, u_in, adj, conEd = inputs
+
+        pooledNodes = tf.matmul(conEd, v_in, transpose_a=True)
+        pooledEdges = tf.matmul(conEd, e_in)
+        v = v_in+pooledEdges
+        e = e_in+pooledNodes
+
+        pooledNodes = tf.matmul(conEd, v, transpose_a=True)
+        pooledEdges = tf.matmul(conEd, e)
+        v_out = v+pooledEdges
+        e_out = e+pooledNodes
+
+        return [v_out, e_out, u_in, adj, conEd]
+
 class GraphNetsLayer(keras.layers.Layer):
-    def __init__(self, dim, update_layers, activation="relu"):
+    def __init__(self):
         super(GraphNetsLayer, self).__init__()
         self.pool_V_to_E = PoolVerticesToEdges()
         self.pool_E_to_V = PoolEdgesToVertices()
@@ -156,7 +175,6 @@ class GraphNetsLayer(keras.layers.Layer):
         self.pool_U_to_E = PoolUniversalToEdges()
         self.pool_V_to_U = PoolVerticesToUniversal()
         self.pool_E_to_U = PoolEdgesToUniversal()
-        self.updater = GraphUpdate(dim, dim, dim, update_layers, activation)
 
     def call(self, inputs):
         x = inputs
@@ -168,6 +186,5 @@ class GraphNetsLayer(keras.layers.Layer):
         
         x = self.pool_V_to_U(x)
         x = self.pool_E_to_U(x)
-        x = self.updater(x)
 
         return x
