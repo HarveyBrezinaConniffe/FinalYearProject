@@ -56,14 +56,19 @@ class UpdateFunction(keras.layers.Layer):
         super(UpdateFunction, self).__init__()
         self.num_layers = num_layers
         self.dense_layers = []
+        self.activation = tf.keras.layers.LeakyReLU()
+        self.normalizer = tf.keras.layers.BatchNormalization()
         
         for i in range(num_layers):
-            self.dense_layers.append(Dense(out_dim, activation=activation, name=name+f"_{i}"))
+            self.dense_layers.append(Dense(out_dim, name=name+f"_{i}"))
 
     def call(self, input):
         x = input
         for i in range(self.num_layers):
             x = self.dense_layers[i](x)
+            x = self.activation(x)
+            x = self.normalizer(x)
+            
         return x
 
 class GraphUpdate(keras.layers.Layer):
@@ -84,82 +89,6 @@ class GraphUpdate(keras.layers.Layer):
         e_out = self.e_update(e_in)
         u_out = self.u_update(u_in)
         return [v_out, e_out, u_out, adj, conEd, edgeAdj]
-
-# Add the embedding of each connected edge to each vertex.
-class PoolEdgesToVertices(keras.layers.Layer):
-    def __init__(self):
-        super(PoolEdgesToVertices, self).__init__()
-
-    def call(self, inputs):
-        v_in, e_in, u_in, adj, conEd = inputs
-
-        pooledEdges = tf.matmul(conEd, e_in)
-        v_out = v_in+pooledEdges
-
-        return [v_out, e_in, u_in, adj, conEd]
-
-# Add the embedding of each connected vertex to each edge.
-class PoolVerticesToEdges(keras.layers.Layer):
-    def __init__(self):
-        super(PoolVerticesToEdges, self).__init__()
-
-    def call(self, inputs):
-        v_in, e_in, u_in, adj, conEd = inputs
-
-        pooledNodes = tf.matmul(conEd, v_in, transpose_a=True)
-        e_out = e_in+pooledNodes
-
-        return [v_in, e_out, u_in, adj, conEd]
-
-# Pool all vertices to universal.
-class PoolVerticesToUniversal(keras.layers.Layer):
-    def __init__(self):
-        super(PoolVerticesToUniversal, self).__init__()
-
-    def call(self, inputs):
-        v_in, e_in, u_in, adj, conEd = inputs
-
-        u_out = tf.reduce_sum(v_in, axis=-1)
-
-        return [v_in, e_in, u_out, adj, conEd]
-
-# Pool all edges to universal.
-class PoolEdgesToUniversal(keras.layers.Layer):
-    def __init__(self):
-        super(PoolEdgesToUniversal, self).__init__()
-
-    def call(self, inputs):
-        v_in, e_in, u_in, adj, conEd = inputs
-        
-        u_out = tf.reduce_sum(e_in, axis=-1)
-
-        return [v_in, e_in, u_out, adj, conEd]
-
-# Pool universal to all vertices.
-class PoolUniversalToVertices(keras.layers.Layer):
-    def __init__(self):
-        super(PoolUniversalToVertices, self).__init__()
-
-    def call(self, inputs):
-        v_in, e_in, u_in, adj, conEd = inputs
-
-        u_tiled = tf.tile(tf.expand_dims(u_in, axis=1), [1, v_in.shape[1], 1])
-        v_out = v_in+u_tiled
-
-        return [v_out, e_in, u_in, adj, conEd]
-
-# Pool universal to all edges.
-class PoolUniversalToEdges(keras.layers.Layer):
-    def __init__(self):
-        super(PoolUniversalToEdges, self).__init__()
-
-    def call(self, inputs):
-        v_in, e_in, u_in, adj, conEd = inputs
-
-        u_tiled = tf.tile(tf.expand_dims(u_in, axis=1), [1, e_in.shape[1], 1])
-        e_out = e_in+u_tiled
-
-        return [v_in, e_out, u_in, adj, conEd]
 
 # Pool to edges from connected edges, vertices and universal. Where information comes from is defined by this layers setup. 
 class PoolToEdges(keras.layers.Layer):
@@ -275,46 +204,3 @@ class PoolStep(keras.layers.Layer):
         _, _, u_out, _, _, _ = self.universal_pooler(inputs)
 
         return [v_out, e_out, u_out, adj, conEd, edgeAdj]
-
-
-class WeaveLayer(keras.layers.Layer):
-    def __init__(self):
-        super(WeaveLayer, self).__init__()
-
-    def call(self, inputs):
-        v_in, e_in, u_in, adj, conEd = inputs
-
-        pooledNodes = tf.matmul(conEd, v_in, transpose_a=True)
-        pooledEdges = tf.matmul(conEd, e_in)
-        v = v_in+pooledEdges
-        e = e_in+pooledNodes
-
-        pooledNodes = tf.matmul(conEd, v, transpose_a=True)
-        pooledEdges = tf.matmul(conEd, e)
-        v_out = v+pooledEdges
-        e_out = e+pooledNodes
-
-        return [v_out, e_out, u_in, adj, conEd]
-
-class GraphNetsLayer(keras.layers.Layer):
-    def __init__(self):
-        super(GraphNetsLayer, self).__init__()
-        self.pool_V_to_E = PoolVerticesToEdges()
-        self.pool_E_to_V = PoolEdgesToVertices()
-        self.pool_U_to_V = PoolUniversalToVertices()
-        self.pool_U_to_E = PoolUniversalToEdges()
-        self.pool_V_to_U = PoolVerticesToUniversal()
-        self.pool_E_to_U = PoolEdgesToUniversal()
-
-    def call(self, inputs):
-        x = inputs
-        x = self.pool_V_to_E(x)
-        x = self.pool_U_to_E(x)
-        
-        x = self.pool_U_to_V(x)
-        x = self.pool_E_to_V(x)
-        
-        x = self.pool_V_to_U(x)
-        x = self.pool_E_to_U(x)
-
-        return x
