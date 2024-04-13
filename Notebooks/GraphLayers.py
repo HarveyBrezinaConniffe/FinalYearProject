@@ -52,12 +52,14 @@ def convertFromNetworkX(graph, maxNodes, maxEdges, embeddingDim):
     return nodeEmbeddings, edgeEmbeddings, universalEmbedding, adjacencyMatrix, connectedEdges, edgeAdjacency
 
 class UpdateFunction(keras.layers.Layer):
-    def __init__(self, name, num_layers, activation, out_dim):
+    def __init__(self, name, num_layers, activation, out_dim, dropout=False):
         super(UpdateFunction, self).__init__()
         self.num_layers = num_layers
         self.dense_layers = []
         self.activation = tf.keras.layers.LeakyReLU()
         self.normalizer = tf.keras.layers.BatchNormalization()
+        self.dropout = tf.keras.layers.Dropout(0.3)
+        self.apply_dropout = dropout
         
         for i in range(num_layers):
             self.dense_layers.append(Dense(out_dim, name=name+f"_{i}"))
@@ -66,8 +68,10 @@ class UpdateFunction(keras.layers.Layer):
         x = input
         for i in range(self.num_layers):
             x = self.dense_layers[i](x)
-            x = self.activation(x)
             x = self.normalizer(x)
+            x = self.activation(x)
+            if self.apply_dropout:
+                x = self.dropout(x)
             
         return x
 
@@ -77,11 +81,12 @@ class GraphUpdate(keras.layers.Layer):
                  e_out_dim,
                  u_out_dim,
                  update_layers,
+                 dropout=False,
                  activation="relu"):
         super(GraphUpdate, self).__init__()
-        self.v_update = UpdateFunction("V_Update", update_layers, activation, v_out_dim)
-        self.e_update = UpdateFunction("E_Update", update_layers, activation, e_out_dim)
-        self.u_update = UpdateFunction("U_Update", update_layers, activation, u_out_dim)
+        self.v_update = UpdateFunction("V_Update", update_layers, activation, v_out_dim, dropout=dropout)
+        self.e_update = UpdateFunction("E_Update", update_layers, activation, e_out_dim, dropout=dropout)
+        self.u_update = UpdateFunction("U_Update", update_layers, activation, u_out_dim, dropout=dropout)
 
     def call(self, inputs):
         v_in, e_in, u_in, adj, conEd, edgeAdj = inputs
